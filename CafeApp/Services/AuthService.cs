@@ -8,24 +8,35 @@ namespace CafeApp.Services;
 
 public class AuthService : IAuthService
 {
-    private readonly CafeAppContext _context;
+    private readonly IUserAuthRepository _userRepository;
 
-    public AuthService(CafeAppContext context)
+    public AuthService(IUserAuthRepository userRepository)
     {
-        _context = context;
+        _userRepository = userRepository;
     }
 
-    public Task<User> LoginAsync(LoginUserDto loginUserDto, CancellationToken cancellationToken)
+    public async Task<User> LoginAsync(LoginUserDto loginUserDto, CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        var user = await _userRepository.GetByLoginAsync(loginUserDto.Login, cancellationToken);
+
+        if (user == null || !BCrypt.Net.BCrypt.Verify(loginUserDto.Password, user.Password))
+        {
+            throw new UnauthorizedAccessException("Invalid login or password");
+        }
+
+        return user;
     }
 
     public async Task<User> RegisterAsync(RegisterUserDto registerUserDto, CancellationToken cancellationToken)
     {
-        // validation
         ValidateRegisterUser(registerUserDto);
 
-        // create user
+        var existingUser = await _userRepository.GetByLoginAsync(registerUserDto.Login, cancellationToken);
+        if (existingUser != null)
+        {
+            throw new ArgumentException("User with this login already exists");
+        }
+
         var user = new Customer
         {
             BirthDate = DateTime.Now.AddYears(-20),
@@ -36,33 +47,22 @@ public class AuthService : IAuthService
             Password = BCrypt.Net.BCrypt.HashPassword(registerUserDto.Password)
         };
 
-        // save to db
-        _context.Customers.Add(user);
-        await _context.SaveChangesAsync(cancellationToken);
-
+        await _userRepository.AddAsync(user, cancellationToken);
         return user;
     }
 
-    private void ValidateRegisterUser(RegisterUserDto registerUserDto)
+    private void ValidateRegisterUser(RegisterUserDto dto)
     {
-        if (string.IsNullOrEmpty(registerUserDto.FirstName))
-        {
-            throw new ArgumentException("FirstName cannot be empty", nameof(registerUserDto.FirstName));
-        }
+        if (string.IsNullOrWhiteSpace(dto.FirstName))
+            throw new ArgumentException("FirstName cannot be empty");
 
-        if (string.IsNullOrEmpty(registerUserDto.LastName))
-        {
-            throw new ArgumentException("LastName cannot be empty", nameof(registerUserDto.LastName));
-        }
+        if (string.IsNullOrWhiteSpace(dto.LastName))
+            throw new ArgumentException("LastName cannot be empty");
 
-        /*if (!Regex.IsMatch(registerUserDto.Password, @"^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=])(?=\S+$).{8,20}$"))
-        {
-            throw new ArgumentException("Password is incorrect", nameof(registerUserDto.Password));
-        }*/
+        if (!Regex.IsMatch(dto.Login, @"^[\w\-\.]+@([\w-]+\.)+[\w-]{2,}$"))
+            throw new ArgumentException("Login must be a valid email");
 
-        if (!Regex.IsMatch(registerUserDto.Login, @"^[\w\-\.]+@([\w-]+\.)+[\w-]{2,}$"))
-        {
-            throw new ArgumentException("Login is incorrect", nameof(registerUserDto.Login));
-        }
+        if (dto.Password.Length < 6)
+            throw new ArgumentException("Password must be at least 6 characters");
     }
 }
